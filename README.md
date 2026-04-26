@@ -8,7 +8,7 @@ This project was built independently as part of a structured learning journey to
 
 ## What Problem It Solves
 
-Most AI SaaS tutorials stop at "call the OpenAI API and return the result." This project goes further by solving the production concerns that actually matter:
+Most AI SaaS Systems stop at "call the OpenAI API and return the result." This project goes further by solving the production concerns that actually matter:
 
 - **Who can call the AI?** — Full JWT auth with refresh token rotation and Redis-based token invalidation
 - **How much does it cost per user?** — Per-request token and USD cost tracking stored in PostgreSQL
