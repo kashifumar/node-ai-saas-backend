@@ -1,8 +1,8 @@
-# AI SaaS Backend
+# Node.js AI SaaS Backend
 
-A production-grade REST API backend for an AI-powered SaaS platform. Built to demonstrate real-world backend engineering skills — from secure JWT authentication and Redis-backed session management to OpenAI integration with cost tracking, vector embeddings, Retrieval-Augmented Generation (RAG), multi-tenant organisations, plan-based billing, and webhook delivery.
+A production-grade REST API backend for an AI-powered SaaS platform, built independently as part of a structured learning journey toward becoming an AI-integrated backend architect. Demonstrates real-world backend engineering skills — from secure JWT authentication and Redis-backed session management to OpenAI integration with cost tracking, vector embeddings, and Retrieval-Augmented Generation (RAG) — alongside multi-tenant organisations, plan-based billing, webhook delivery, full-text search, real-time WebSockets, push notifications, async job processing, and time-series logging across five databases.
 
-This project was built independently as part of a structured learning journey toward becoming an AI-integrated backend architect.
+> **Note:** This is a portfolio/learning project. The private repository contains the full source code. This public repository contains documentation only.
 
 ---
 
@@ -24,454 +24,211 @@ Most AI SaaS systems stop at "call the OpenAI API and return the result." This p
 
 ---
 
+## What This Project Demonstrates
+
+- **AI Integration** — RAG pipeline with source attribution, semantic caching, vector embeddings via OpenAI
+- **Multi-database Architecture** — PostgreSQL, pgvector, Redis, Elasticsearch, and Cassandra each used for their optimal use case
+- **Real-time Events** — Socket.IO with JWT authentication and private user rooms
+- **Push Notifications** — Firebase FCM with native service worker (cross-browser)
+- **Production Patterns** — Multi-stage Docker builds, GitHub Actions CI/CD, AWS EC2, S3 backups, health monitoring
+- **Security** — JWT with refresh token rotation, Redis-based token invalidation, helmet, CORS, rate limiting, input sanitization
+- **Multi-tenancy** — Soft org isolation with org_id across all data tables
+- **Async Processing** — BullMQ job queue with webhook callbacks
+
+---
+
 ## Tech Stack
 
-| Technology | Role | Why |
+| Layer | Technology | Purpose |
 |---|---|---|
-| **Node.js + Express 5** | HTTP server | Lightweight, non-blocking I/O; Express 5 adds native async error propagation |
-| **PostgreSQL + pgvector** | Primary database + vector store | Single database for relational data and high-dimensional embedding search |
-| **Prisma ORM** | Database access | Type-safe queries, schema-as-code, clean migration workflow |
-| **Redis** | Cache + rate limit store | Sub-millisecond access token caching; atomic TTL operations for session invalidation; semantic vector index storage |
-| **BullMQ** | Background job queues | Redis-backed, reliable job processing with retry support |
-| **OpenAI SDK v6** | AI completions + embeddings | GPT-4o-mini for text operations; `text-embedding-3-small` for 1536-dim semantic vectors |
-| **JWT (HS256)** | Auth tokens | Stateless access tokens (15m) + stateful refresh tokens (7d) stored in DB |
-| **bcryptjs** | Password hashing | Salted hashing with configurable rounds |
-| **Joi** | Request validation | Declarative schema validation at the route layer before any business logic runs |
-| **Helmet + HPP** | Security headers | HTTP security headers and HTTP parameter pollution protection |
-| **Swagger UI** | API documentation | Auto-generated interactive docs served at `/api/docs` |
+| Runtime | Node.js 20 LTS | Server runtime |
+| Framework | Express 5 | HTTP server |
+| ORM | Prisma 6 | Database access |
+| Primary DB | PostgreSQL 16 | Relational data |
+| Vector Search | pgvector | Semantic similarity search |
+| Cache / Queue | Redis 7 + BullMQ | Caching, rate limiting, job queue |
+| Full-text Search | Elasticsearch 8.15 | Keyword search with fuzzy matching |
+| Time-series | Cassandra 5.0 | Login logs, page visit logs |
+| AI | OpenAI SDK v6 | GPT-4o-mini, text-embedding-3-small |
+| Real-time | Socket.IO | WebSocket events |
+| Push | Firebase Admin SDK v14 | FCM push notifications |
+| Auth | JWT + bcrypt | Authentication |
+| Containerisation | Docker + Compose | Local and production deployment |
+| CI/CD | GitHub Actions | Automated deployment |
+| Cloud | AWS EC2 + S3 | Hosting and backups |
 
 ---
 
 ## Architecture
 
-### Request Pipeline
+## Architecture Diagram
+
+![Architecture Diagram](docs/architecture-diagram.svg)
+
+---
+
+### System Overview
 
 ```
-Request
-  → Rate Limiter (Redis-backed, global 100/15m + auth 10/15m)
-  → Logger Middleware
-  → Auth Middleware (JWT + token_nbf check)
-  → Validation Middleware (Joi)
-  → Plan Limit Middleware (daily request count via Redis)
-  → Route → Controller → Service
-  → PostgreSQL (Prisma) / Redis / OpenAI
-  → sendSuccess() → Standardised JSON Response
+┌─────────────────────────────────────────────────────────┐
+│                     CLIENT LAYER                        │
+│          Next.js 16 (React, Tailwind CSS)               │
+│    Login │ Dashboard │ Documents │ Ask AI │ Usage       │
+└──────────────────────┬──────────────────────────────────┘
+                       │ HTTPS + WSS
+┌──────────────────────▼──────────────────────────────────┐
+│                  REVERSE PROXY                          │
+│                 Nginx + SSL                             │
+└──────────────────────┬──────────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────────┐
+│              API LAYER (Express 5 + Socket.IO)          │
+│                                                         │
+│  /api/v1/auth        /api/v1/documents   /api/v1/rag   │
+│  /api/v1/users       /api/v1/search      /api/v1/billing│
+│  /api/v1/ai          /api/v1/jobs        /api/v1/orgs  │
+│  /api/v1/activity    /api/v1/documents-search           │
+│                                                         │
+│  Middleware: authenticate → attachOrg → authorize       │
+│  Security: helmet, CORS, HPP, sanitization, rate limit  │
+└──────┬──────────┬────────────┬───────────┬─────────────┘
+       │          │            │           │
+┌──────▼───┐ ┌───▼────┐ ┌────▼────┐ ┌───▼────────┐
+│PostgreSQL│ │ Redis  │ │Elastic  │ │ Cassandra  │
+│+pgvector │ │+BullMQ │ │ search  │ │            │
+│          │ │        │ │         │ │ login_logs │
+│users     │ │cache   │ │documents│ │ page_visits│
+│documents │ │jobs    │ │ index   │ │            │
+│embeddings│ │rate    │ │         │ └────────────┘
+│rag_history│ │limits  │ └─────────┘
+│billing   │ └────────┘      │
+└──────────┘           ┌─────▼──────────┐
+       │               │  OpenAI API    │
+       │               │  GPT-4o-mini   │
+┌──────▼──────────┐    │  Embeddings    │
+│  BullMQ Workers │    └────────────────┘
+│  EmbeddingWorker│         │
+│  → Socket.IO    │◄────────┘
+│  → FCM notify   │
+│  → Webhook      │
+└─────────────────┘
 ```
 
-### Token Refresh and Invalidation Strategy
+### Why Five Databases?
 
-The auth system uses a dual-token model with Redis-based invalidation:
+Each database is chosen for a specific access pattern:
 
-- **Access token** — short-lived (15 min), cached in Redis under `access_token:{id}`
-- **Refresh token** — long-lived (7 days), stored in PostgreSQL
-- **`token_nbf:{id}`** — a Redis key holding a "not-before" timestamp in milliseconds. On logout or token refresh, this is updated to the new token's `iat * 1000`. The `authenticate` middleware rejects any access token whose `iat * 1000 < nbf`, instantly invalidating previously issued tokens without a database round trip.
-- **Idempotent login** — if a valid session already exists, the server returns the existing tokens with `loginStatus: 2` rather than creating duplicates.
+| Database | Use Case | Why Not PostgreSQL? |
+|---|---|---|
+| PostgreSQL | Relational/transactional data | Primary store |
+| pgvector | Vector similarity search | Native vector ops in same DB |
+| Redis | Sub-millisecond caching, job queues | Speed, pub/sub |
+| Elasticsearch | Full-text keyword search | Fuzzy matching, highlighting, relevance scoring |
+| Cassandra | High-volume append-only time-series | Partition-key design, write throughput |
 
-### Multi-Tenant Organisation Model
+---
 
-Every data table (`documents`, `embeddings`, `ai_usage`, `rag_history`, `billing_events`, `job_events`) carries an optional `org_id`. The `attachOrg` middleware resolves the requesting user's `orgId` from the DB and attaches it to `req.orgId`. Services write `orgId` when creating records, allowing future queries to be scoped to an organisation. The org creator is automatically promoted to `admin` role in a single Prisma transaction.
-
-### Background Job Design
-
-BullMQ queues (`emailQueue`, `documentQueue`) are defined in `src/config/queue.js`. Workers in `src/workers/` consume these queues asynchronously. On each job completion or failure:
-
-1. The worker calls `updateJobEvent()` to persist the outcome to the `job_events` PostgreSQL table.
-2. If the job payload contained a `callbackUrl`, `deliverWebhook()` sends an HTTP POST to that URL with a `job.completed` payload (10-second timeout). The `callbackSent` and `callbackSentAt` fields are updated on the `JobEvent` record regardless of delivery success.
-
-This separates BullMQ's in-memory state (ephemeral) from durable job history (PostgreSQL), enabling both polling and push delivery.
-
-### Semantic Cache for RAG
-
-Before each RAG query hits OpenAI:
-
-1. The question is embedded into a 1536-dim vector.
-2. That vector is compared (cosine similarity) against a per-user vector index stored in Redis (`rag:segments:{userId}:vectors`), holding up to 100 recent question vectors.
-3. If any cached question scores ≥ 0.85 similarity, the previous answer is returned immediately — no OpenAI call.
-4. On a cache miss, the answer is computed, stored, and the new question vector is added to the index (oldest entry evicted when the limit is exceeded).
-
-### Prompt Engineering Layer
-
-All prompts are centralised in `src/utils/promptBuilder.js`. Each builder returns a `{ system, user }` pair:
-
-- **Analyzer** — enforces a strict JSON schema: `summary`, `keyPoints`, `sentiment`, `topics`, `wordCount`
-- **Summarizer** — returns `summary`, `bulletPoints`, `readingTimeMinutes`
-- **Classifier** — returns `category`, `confidence`, `reasoning`, constrained to caller-provided categories
-- **RAG** — injects retrieved document chunks with source labels and relevance scores; instructs the model to answer only from provided sources and never hallucinate
-
-A three-pass `parseAIJson()` utility handles cases where the model wraps output in markdown code fences despite being instructed not to: direct parse → markdown fence stripping → regex extraction of the first `{...}` block.
-
-### Vector Search and RAG Pipeline
+## RAG Pipeline
 
 ```
-User uploads document
-    → chunkText() splits into overlapping 400-word chunks (80-word overlap)
-      with paragraph-aware splitting to preserve semantic units
-    → generateEmbeddings() batches all chunks in one OpenAI API call
-    → Chunks stored in PostgreSQL via pgvector (raw SQL for vector insertion)
-
-User asks a question
-    → Semantic cache check: embed question, cosine-compare against Redis vector index
-    → Cache hit: return previous answer (no OpenAI call)
-    → Cache miss:
-        → pgvector cosine similarity search (<=> operator) retrieves top-k chunks
-        → Confidence scored: 70% top-chunk similarity + 30% average similarity
-        → buildRAGPrompt() injects chunks as numbered sources with relevance scores
-        → OpenAI generates a grounded answer (temperature 0.1 for factual accuracy)
-        → Q&A pair saved to rag_history for auditability
-        → Token usage tracked and USD cost calculated per request
-        → Question vector stored in Redis semantic cache index
+User question
+  → Check semantic cache (cosine similarity, threshold 0.92)
+  → Cache hit → return cached answer
+  → Check exact cache (MD5 hash)
+  → Cache hit → return cached answer
+  → Generate question embedding (text-embedding-3-small)
+  → Vector similarity search (pgvector, threshold 0.6)
+  → Retrieve top N chunks (min 2 required)
+  → Build prompt with source attribution rules
+  → Call GPT-4o-mini (temperature 0.1)
+  → Calculate confidence (70% top chunk + 30% average)
+  → Cache result (30 min TTL)
+  → Save to rag_history
+  → Return answer + sources + confidence
 ```
 
 ---
 
-## Key Features and Modules
-
-### Authentication (`/api/v1/auth`)
-- Register, login, logout, and token refresh
-- Refresh token rotation with database persistence and expiry enforcement
-- Redis-based access token invalidation on logout (token_nbf pattern)
-- Idempotent login — detects active sessions and returns existing tokens
-- `GET /users/me` session guard: returns `401` if the user has logged out, even if the JWT has not yet expired
-
-### Multi-Tenant Organisations (`/api/v1/organisations`)
-- Create an organisation — creator is promoted to `admin` role in a single transaction
-- Auto-generated URL-safe slugs with deduplication (e.g. `acme-corp-2`)
-- Admin-only member list and invite-by-email endpoints
-- All data tables carry `org_id` so org-scoped queries are possible without joins
-- `attachOrg` middleware resolves `orgId` from the DB and attaches it to `req.orgId`
-
-### Plan-Based Limits + Billing (`/api/v1/billing`)
-- Three tiers — **Free**, **Pro**, **Enterprise** — with per-plan daily request limits, monthly token caps, and document quotas
-- `enforceRequestLimit` middleware gates every AI endpoint: checks and increments a per-user Redis counter with a midnight expiry
-- Monthly token usage checked against plan cap before each OpenAI call
-- `POST /billing/upgrade` records a `BillingEvent` and sets `planExpiresAt` (30 days); simulated for now with a clear Stripe integration pathway
-- `GET /billing/plans` returns current plan details, available tiers, and pricing table
-- `GET /billing/history` returns a chronological log of all plan change events
-
-### AI Text Operations (`/api/v1/ai`)
-- `POST /analyze` — sentiment analysis, key points, topic extraction, word count
-- `POST /summarize` — concise summary with bullet points and estimated reading time
-- `POST /classify` — multi-class classification with caller-defined categories and confidence scores
-- Automatic retry with exponential backoff via `withRetry()` wrapper
-- Structured JSON parsing with three-pass fallback strategy
-
-### Document Management (`/api/v1/documents`)
-- Create, list, retrieve, and delete documents
-- AI analysis cached in the document record — repeat requests return instantly without a second OpenAI call
-- Document status lifecycle: `pending` → `processing` → `completed` / `failed`
-- On failure, status is rolled back so users can retry
-- Document count enforced against plan tier before creation
-
-### Semantic Embeddings (`/api/v1/documents/:id/embed`)
-- Chunks documents into overlapping segments with paragraph-aware splitting
-- Batches all chunks in a single OpenAI `text-embedding-3-small` API call
-- Stores 1536-dimensional vectors in PostgreSQL via pgvector
-- Tracks character positions (`char_start`, `char_end`) per chunk for future source highlighting
-
-### Vector Search (`/api/v1/search`)
-- Semantic similarity search across all user documents or scoped to a single document
-- Configurable similarity threshold and result count
-- Returns ranked chunks with similarity scores, document title, and text excerpts
-
-### RAG Question Answering (`/api/v1/rag`)
-- Natural language questions answered from the user's own document corpus
-- Semantic cache checked first — identical-intent questions answered without calling OpenAI
-- Confidence levels: `high` / `medium` / `low` / `none` based on similarity score distribution
-- Response includes answer, confidence, source citations with relevance scores, and token usage
-- Q&A history persisted for audit trail
-
-### Cost-Aware Usage Tracking (`/api/v1/usage`)
-- Every OpenAI call records prompt tokens, completion tokens, total tokens, and calculated USD cost
-- Per-model pricing table with base-model normalisation — handles versioned API model names like `gpt-4o-mini-2024-07-18`
-- Aggregated stats endpoint: total calls, total tokens, total USD cost, and a 10-entry recent usage log
-
-### Background Jobs + Webhook Callbacks (`/api/v1/jobs`)
-- Queue email and document processing jobs via REST; jobs accept an optional `callbackUrl`
-- Job state persisted to the `job_events` PostgreSQL table — durable history independent of BullMQ's in-memory state
-- `GET /jobs/:jobId/status` — poll any job by ID for its DB-persisted status and result
-- `GET /jobs` — list all jobs for the current user (most recent 20)
-- On job completion, workers update `job_events` and fire an HTTP POST to `callbackUrl` if provided; delivery outcome (`callbackSent`, `callbackSentAt`) recorded on the event
-
-### Observability (`/health`)
-- `GET /health/ping` — lightweight liveness check (for load balancers and uptime monitors)
-- `GET /health` — deep check: PostgreSQL (`SELECT 1`), Redis (`PING`), system memory (warns at > 90%)
-- `GET /health/metrics` — request counts, average/p99 response times, process memory, Node version, PID
-- `GET /health/performance` — slow request log, memory snapshots, top endpoints by hit count
-
-### Rate Limiting
-- Global limiter: 100 requests / 15 minutes per IP (Redis-backed)
-- Auth limiter: 10 requests / 15 minutes per IP on all `/api/v1/auth` routes
-
----
-
-## API Reference
-
-Interactive Swagger documentation is available at `/api/docs` when the server is running.
+## API Endpoints
 
 ### Auth
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/api/v1/auth/register` | — | Create a new user account |
-| POST | `/api/v1/auth/login` | — | Login — returns `accessToken` + `refreshToken` |
-| POST | `/api/v1/auth/refresh` | — | Exchange refresh token for a new access token |
-| POST | `/api/v1/auth/logout` | — | Invalidate refresh token and current access token |
-
-### Users
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/api/v1/users/me` | Bearer | Current user profile (Redis cache-first, session guard) |
-| GET | `/api/v1/users/admin` | Bearer + admin role | Admin-only protected route |
-
-### Organisations
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/api/v1/organisations` | Bearer | Create an organisation (caller becomes admin) |
-| GET | `/api/v1/organisations/me` | Bearer | Get current user's organisation |
-| GET | `/api/v1/organisations/members` | Bearer + admin | List all members in the organisation |
-| POST | `/api/v1/organisations/invite` | Bearer + admin | Add an existing user to the organisation by email |
-
-### Billing
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/api/v1/billing/plans` | Bearer | Current plan details and available tier pricing |
-| POST | `/api/v1/billing/upgrade` | Bearer | Upgrade or downgrade to a different plan |
-| GET | `/api/v1/billing/history` | Bearer | Chronological log of billing events |
-
-### AI
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/api/v1/ai/analyze` | Bearer | Analyze text — sentiment, key points, topics |
-| POST | `/api/v1/ai/summarize` | Bearer | Summarize text with bullet points and reading time |
-| POST | `/api/v1/ai/classify` | Bearer | Classify text into caller-provided categories |
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/v1/auth/register` | Register new user |
+| POST | `/api/v1/auth/login` | Login, receive tokens |
+| POST | `/api/v1/auth/refresh` | Refresh access token |
+| POST | `/api/v1/auth/logout` | Logout, revoke token |
 
 ### Documents
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/api/v1/documents` | Bearer | Create a document |
-| GET | `/api/v1/documents` | Bearer | List user's documents |
-| GET | `/api/v1/documents/:id` | Bearer | Get a specific document |
-| DELETE | `/api/v1/documents/:id` | Bearer | Delete a document |
-| POST | `/api/v1/documents/:id/analyze` | Bearer | Run AI analysis (cached after first run) |
-| POST | `/api/v1/documents/:id/embed` | Bearer | Generate and store vector embeddings |
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/v1/documents` | List documents |
+| POST | `/api/v1/documents` | Create document |
+| DELETE | `/api/v1/documents/:id` | Delete document |
+| POST | `/api/v1/documents/:id/embed` | Queue embedding job |
+| GET | `/api/v1/documents/:id/embed/status` | Embedding status |
 
-### Search and RAG
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/api/v1/search` | Bearer | Semantic vector search across documents |
-| POST | `/api/v1/rag/ask` | Bearer | Ask a question answered from document corpus (semantic cache-first) |
+### Search
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/v1/search` | Semantic search (pgvector) |
+| GET | `/api/v1/documents-search` | Full-text search (Elasticsearch) |
 
-### Jobs
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/api/v1/jobs/email` | Bearer | Queue an email job (optional `callbackUrl`) |
-| POST | `/api/v1/jobs/document` | Bearer | Queue a document processing job (optional `callbackUrl`) |
-| GET | `/api/v1/jobs` | Bearer | List all jobs for current user (last 20) |
-| GET | `/api/v1/jobs/:jobId/status` | Bearer | Poll a specific job's DB-persisted status |
-| GET | `/api/v1/jobs/email/:jobId` | Bearer | Poll email job state from BullMQ |
+### RAG
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/v1/rag/ask` | Ask a question |
+| GET | `/api/v1/rag/history` | Query history |
 
-### Usage
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/api/v1/usage` | Bearer | Aggregated token and cost usage statistics |
+### Billing & Usage
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/v1/billing/plans` | Available plans |
+| POST | `/api/v1/billing/upgrade` | Upgrade plan |
+| GET | `/api/v1/users/usage` | Usage stats |
+| GET | `/api/v1/activity/logins` | Login history (Cassandra) |
+| GET | `/api/v1/activity/visits` | Page visit history (Cassandra) |
 
 ### Health
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/health/ping` | — | Liveness check for load balancers |
-| GET | `/health` | — | Deep health check (DB, Redis, memory) |
-| GET | `/health/metrics` | — | Request counts, response times, process info |
-| GET | `/health/performance` | — | Slow request log, memory trend, top endpoints |
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/health/ping` | Lightweight ping |
+| GET | `/health` | Deep health check |
+| GET | `/health/metrics` | Request counts, p95/p99 |
 
 ---
 
-## Challenges Solved
+## Key Architecture Decisions
 
-### Redis TTL Precision Bug (token_nbf)
-After implementing token invalidation on logout, freshly issued access tokens were being rejected immediately. Root cause: `Date.now()` (milliseconds) was stored as the `nbf` boundary, but the new token's `iat` is in seconds — making `iat * 1000 < Date.now()` always true for the instant of issuance. The fix was to store `newToken.iat * 1000` as the boundary, so the newly issued token always passes the check.
+### ADR 001 — PostgreSQL in Docker vs AWS RDS
+Chose Docker on EC2 for cost (free vs ~$30/month) and full control. pgvector pre-installed. Migration path to RDS when paying customers exist.
 
-### OpenAI SDK v6 Responses API Migration
-The OpenAI Node SDK v6 introduced the Responses API (`openai.responses.create`) as the preferred interface, replacing the legacy `chat.completions.create`. Adapting required updating all call sites, adjusting to `input_tokens`/`output_tokens` field names, and building a `handleAIError` utility that normalises error codes across both API surfaces.
+### ADR 002 — Custom Migration Runner vs Prisma Migrate
+Custom SQL runner with transaction-wrapped rollback, automatic startup execution, and duration tracking. Trade-off: no schema diffing.
 
-### pgvector with Prisma
-Prisma does not natively support binding `vector` types as query parameters. The schema uses `previewFeatures = ["postgresqlExtensions"]` with `extensions = [vector]` in the datasource block — a combination that required careful version alignment with Prisma 6. All vector insertions and cosine similarity queries use the raw `pg` pool with parameterised SQL (`$1::vector`) rather than going through Prisma.
+### ADR 003 — Soft Multi-Tenancy vs Hard Isolation
+Single database with org_id on all tables. Sufficient for early-stage SaaS. Migration path to schema-per-tenant for compliance requirements.
 
-### Structured JSON Reliability from LLMs
-Instructing a model to return pure JSON without markdown fences is not always reliable in practice. The `parseAIJson()` utility implements a three-pass parsing strategy: direct `JSON.parse` → markdown fence stripping → regex extraction of the first `{...}` block. This makes AI response parsing robust without requiring the model's structured output mode.
+### ADR 004 — In-Memory Metrics vs External APM
+Custom metrics store — zero cost, zero dependencies. Migration path to Prometheus + Grafana when scaling beyond one instance.
 
-### Security Hardening — Logout and Session Guard
-A common oversight in JWT systems is that logout only clears client-side storage, leaving the token valid until expiry. Here, logout writes a `token_nbf` key to Redis that server-side invalidates the current access token immediately. Additionally, `GET /users/me` queries with `NOT: { refreshToken: null }`, so a logged-out user gets a `401` instantly regardless of the token's remaining TTL.
-
-### Idempotent Login with Session Detection
-Calling login twice with valid credentials would otherwise create duplicate sessions. The service checks for an active session (`refreshToken != null AND refreshTokenExpiresAt > now`) before issuing new tokens — returning the existing session and a `loginStatus: 2` signal so clients can handle the "already logged in" state without showing duplicate login errors.
-
-### Semantic Cache Vector Index Design
-Naively storing one Redis key per cached question does not support similarity lookup — you would need an exact key match. Instead, the semantic cache maintains a per-user *vector index*: a single Redis key holding an array of `{ question, vector, cacheKey }` entries. On each query the index is loaded once, all cosine similarities are computed in-process, and the best match is checked against the threshold. This avoids a separate vector database while keeping RAG response times fast for repeat-intent questions.
-
-### Separating Durable Job State from BullMQ
-BullMQ's job state lives in Redis and is ephemeral — jobs are pruned on completion. Clients that need to check job outcomes hours later, or receive webhook callbacks, need a durable record. The `job_events` PostgreSQL table captures every job at creation and is updated by the worker on completion or failure. This lets clients poll `/jobs/:jobId/status` indefinitely and keeps a full audit trail independent of Redis retention settings.
+### ADR 005 — Semantic Caching
+Per-user question vector index in Redis. Cosine similarity threshold 0.92 catches paraphrased questions. Capped at 100 vectors per user, 30 min TTL.
 
 ---
 
-## What I Learned
+## Project Versions
 
-### Node.js Patterns from a Laravel Background
-Coming from Laravel's MVC conventions, the biggest mental shift was understanding that Node.js has no built-in structure — you build it deliberately. The Controller → Service pattern here mirrors Laravel's approach but is assembled from first principles: `asyncHandler` wrappers instead of try-catch in every controller, a centralised error middleware that handles all thrown errors uniformly by reading `err.status`, and Joi schemas at the route layer instead of Form Requests.
-
-### AI Prompt Design
-Building reliable AI integrations means treating prompts like contracts: specify the exact output schema, enumerate what the model must never do, and validate the output defensively on receipt. The `promptBuilder.js` pattern — returning `{ system, user }` pairs — keeps prompts composable, version-controlled, and testable independently of the HTTP layer.
-
-### Token Economics and Cost Awareness
-Tracking per-request token usage revealed how quickly costs accumulate at scale. Storing cost at insertion time (rather than computing it on read) ensures historical accuracy even if pricing changes. The cost calculator normalises versioned model names so pricing stays correct as OpenAI ships new model versions under the same family name.
-
-### Vector Search and RAG Design
-Building a RAG system from scratch — rather than using a framework — required understanding each stage independently: what chunking strategy minimises context loss (overlapping windows with paragraph-aware splitting), how cosine similarity translates to a meaningful confidence signal (weighted toward the top result rather than a naive average), and how to write a prompt that keeps the model genuinely grounded in provided sources rather than drifting to its training data.
-
-### Semantic Caching as a Cost Control Mechanism
-At scale, many user questions have the same intent even if phrased differently. Storing question embeddings in a lightweight Redis vector index and skipping OpenAI calls when similarity exceeds 0.85 cuts costs and latency for the most common queries. The key design constraint was choosing a threshold high enough to avoid false matches while low enough to catch genuine paraphrases.
-
-### Multi-Tenancy as a Schema Concern, Not an App Concern
-Adding `org_id` to every data table makes multi-tenancy a query filter rather than application logic. The `attachOrg` middleware resolves the org once per request, and services receive `orgId` as an explicit argument. This keeps tenant isolation auditable at the data layer and avoids scattering ownership checks throughout the codebase.
+| Tag | Description |
+|---|---|
+| `v1.0-production` | Phase 3 — backend hardening, security, monitoring, load testing |
+| `v2.0` | Phase 4 — RAG improvements, frontend, FCM, Elasticsearch, WebSockets, Cassandra |
 
 ---
 
-## Local Setup
+## Related Repository
 
-### Prerequisites
-- Node.js v18+
-- PostgreSQL 14+ with the pgvector extension
-- Redis 6+
-- An OpenAI API key
-
-### Clone and Install
-
-```bash
-git clone <repo-url>
-cd ai-saas-backend
-npm install
-npx prisma generate
-```
-
-### Environment
-
-Copy `.env.example` to `.env` and fill in your values:
-
-```bash
-cp .env.example .env
-```
-
-```env
-PORT=5000
-NODE_ENV=development
-
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ai_saas_dev
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=ai_saas_dev
-DB_USER=postgres
-DB_PASSWORD=your_password
-
-JWT_SECRET=your_jwt_secret_here
-JWT_EXPIRES_IN=15m
-JWT_REFRESH_SECRET=your_refresh_secret_here
-JWT_REFRESH_EXPIRES_IN=7d
-
-REDIS_HOST=localhost
-REDIS_PORT=6379
-
-OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_MODEL=gpt-4o-mini
-```
-
-### Database Setup
-
-Enable the pgvector extension in PostgreSQL:
-
-```sql
-CREATE EXTENSION IF NOT EXISTS vector;
-```
-
-Run Prisma migrations:
-
-```bash
-npx prisma migrate dev
-```
-
-### Run
-
-```bash
-# Development (hot reload)
-npm run dev
-
-# Production
-npm start
-```
-
-Server starts on `http://localhost:5000`. Swagger docs: `http://localhost:5000/api/docs`.
-
-### WSL2 / Ubuntu Notes
-- Start services before running the app: `sudo service postgresql start && sudo service redis-server start`
-- If Redis refuses connections, set `REDIS_HOST=127.0.0.1` instead of `localhost` to avoid IPv6 resolution issues
-
----
-
-## Project Structure
-
-```
-prisma/
-  schema.prisma             # Models: User, Organisation, Document, Embedding,
-                            #         AiUsage, RagHistory, BillingEvent, JobEvent
-src/
-  app.js                    # Entry point — middleware, routes, startup sequence
-  config/
-    env.js                  # Environment variable loader and validator
-    db.js                   # Legacy pg Pool (used for /db/test health route only)
-    prisma.js               # Prisma client singleton
-    redis.js                # Redis client with connection lifecycle management
-    rateLimiter.js          # Global (100/15m) and auth (10/15m) limiters
-    queue.js                # BullMQ queue instances
-    swagger.js              # Swagger/OpenAPI spec configuration
-    openai.js               # OpenAI client singleton
-    plans.js                # Plan definitions — free/pro/enterprise limits
-    metrics.js              # In-process request metrics collector
-  routes/                   # Route definitions — no logic
-  controllers/              # HTTP parsing, calls service, returns JSON
-  services/
-    auth.service.js         # Register, login, logout, refresh token logic
-    organisation.service.js # Org creation, member management, invite-by-email
-    document.service.js     # Document CRUD + AI analysis with result caching
-    embedding.service.js    # Document chunking and pgvector storage
-    search.service.js       # Cosine similarity search with pgvector
-    rag.service.js          # Full RAG pipeline with semantic cache + confidence scoring
-    ai.service.js           # Analyze, summarize, classify via OpenAI
-    usage.service.js        # Token and USD cost tracking aggregation
-    billing.service.js      # Plan upgrade/downgrade + billing event recording
-    limit.service.js        # Per-plan daily request, monthly token, document limits
-    jobEvent.service.js     # job_events CRUD — durable job state in PostgreSQL
-    health.service.js       # DB/Redis/memory checks, metrics, performance summaries
-  middlewares/
-    auth.middleware.js      # Bearer JWT verification + token_nbf invalidation check
-    org.middleware.js       # attachOrg — resolves orgId from DB, sets req.orgId
-    planLimit.middleware.js # enforceRequestLimit — checks and increments daily counter
-    validate.middleware.js  # Joi request schema validation
-    logger.middleware.js    # Per-request method + URL logger
-    error.middleware.js     # Centralised error handler — reads err.status
-  utils/
-    promptBuilder.js        # All system/user prompt builders + parseAIJson
-    embeddings.js           # Embedding generation + overlapping chunk algorithm
-    semanticCache.js        # Redis vector index — cosine similarity lookup for RAG cache
-    costCalculator.js       # Per-model USD cost calculation with name normalisation
-    aiErrorHandler.js       # OpenAI error normalisation + withRetry wrapper
-    webhook.js              # HTTP webhook delivery with timeout + delivery tracking
-    asyncHandler.js         # Async controller error-forwarding wrapper
-    token.js                # JWT sign/verify helpers
-    cache.js                # Redis get/set/delete/deleteByPattern helpers
-    response.js             # sendSuccess() — consistent JSON response envelope
-  workers/
-    email.worker.js         # BullMQ email job consumer + job_events update + webhook
-    document.worker.js      # BullMQ document job consumer + job_events update + webhook
-    embedding.worker.js     # BullMQ embedding job consumer
-    index.js                # startWorkers() — initialises all workers
-```
+Frontend: [node-ai-saas-frontend](https://github.com/kashifumar/node-ai-saas-frontend)
 
 ---
 
@@ -479,4 +236,8 @@ src/
 
 **KASHIF UMAR**
 
+[LinkedIn](https://www.linkedin.com/in/kashif-umar/) · [X](https://x.com/kashif_umar)
+
 © 2025 All rights reserved. Unauthorized reproduction is not permitted.
+
+---
